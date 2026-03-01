@@ -9,26 +9,34 @@ import re
 import yt_dlp
 import requests
 
-# --- 1. CONFIGURATION (CLOUD SAFE) ---
-# We now pull these from Streamlit's hidden "Secrets" vault
-SPOTIFY_CLIENT_ID = st.secrets["SPOTIFY_CLIENT_ID"]
-SPOTIFY_CLIENT_SECRET = st.secrets["SPOTIFY_CLIENT_SECRET"]
-GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+# --- 1. CONFIGURATION (PULLING FROM VAULT) ---
+try:
+    SPOTIFY_CLIENT_ID = st.secrets["SPOTIFY_CLIENT_ID"]
+    SPOTIFY_CLIENT_SECRET = st.secrets["SPOTIFY_CLIENT_SECRET"]
+    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+except KeyError:
+    st.error("Missing Secrets! Please add SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, and GEMINI_API_KEY to the Streamlit Secrets dashboard.")
+    st.stop()
 
 sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(client_id=SPOTIFY_CLIENT_ID, client_secret=SPOTIFY_CLIENT_SECRET))
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# --- 2. THE FSTRX PROMPT ---
-# Combine Phase 1 (Deconstruction) and Phase 2 (Your 4-Filters) here
+# --- 2. THE MASTER FSTRX PROMPT ---
 SYSTEM_PROMPT = """
-PHASE 1: DECONSTRUCTIVE LISTENING
-Before applying any filters, you MUST perform this internal audit:
-1. TIMBRAL AUDIT: Identify specific synthesis (e.g., analog saws, FM bells). 
-2. CULTURAL MOTIFS: Explicitly check for regional instruments (Koto, Erhu, Taiko). 
-3. HYBRID MAPPING: Identify era fusions (e.g., 80s Retro + Modern Cinematic).
+# FSTRX MASTER ANALYSIS PROTOCOL
 
-PHASE 2: THE FSTRX MECHANICS MATRIX
+### PHASE 1: DECONSTRUCTIVE LISTENING (PRE-ANALYSIS)
+Before applying any filters, you MUST perform this internal audit of the audio:
+1. TIMBRAL AUDIT: Identify specific synthesis (e.g., analog saws, FM bells, 808 sub-bass). 
+2. CULTURAL MOTIFS: Explicitly check for regional instruments (Koto, Erhu, Taiko) or scales (Pentatonic). If detected, these define the track's DNA.
+3. HYBRID MAPPING: Is this a fusion of eras? (e.g., 80s Retro + Modern Cinematic).
+
+### PHASE 2: THE 4-FILTER MECHANICS MATRIX
 [INSERT YOUR ORIGINAL 4-FILTER LOGIC HERE]
+
+### PHASE 3: FINAL SELECTION & OUTPUT
+1. Use the insights from Phase 1 to ensure sub-genre precision (e.g., "Asian-Cyberpunk Electro" instead of "Trance").
+2. Select 10 tracks that match the *mechanics* identified in Phase 1 and 2.
 
 ***SYSTEM PARSING BLOCK***
 After the "TOP 10 SELECTIONS" section, add a section called "### FSTRX_DATA_EXTRACT ###".
@@ -61,92 +69,49 @@ def process_input(text_input, audio_file):
     detected_artist = ""
     debug_log = {"pipeline_used": "Unknown", "audio_attached": False, "error_message": "None", "prompt_sent": ""}
     
-    if audio_file is not None:
+    # TIER 0: Direct Upload
+    if audio_file:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
             tmp.write(audio_file.getvalue())
             tmp_path = tmp.name
         debug_log["pipeline_used"] = "Tier 0: Direct MP3 Upload"
+    
+    # TIER 1 & 2: Spotify Links
     elif "spotify.com" in text_input or "spotify:" in text_input:
         match = re.search(r"track/([a-zA-Z0-9]+)", text_input)
         if match:
-            track_id = match.group(1)
             try:
-                track_info = sp.track(track_id)
-                detected_name, detected_artist = track_info['name'], track_info['artists'][0]['name']
-                preview_url = track_info.get('preview_url')
-                if preview_url:
-                    response = requests.get(preview_url)
+                t_info = sp.track(match.group(1))
+                detected_name, detected_artist = t_info['name'], t_info['artists'][0]['name']
+                preview = t_info.get('preview_url')
+                if preview:
+                    res = requests.get(preview)
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
-                        tmp.write(response.content)
+                        tmp.write(res.content)
                         tmp_path = tmp.name
                     debug_log["pipeline_used"] = "Tier 1: Spotify 30s Preview"
                 else:
                     try:
                         tmp_path = extract_audio(f"ytsearch1:{detected_artist} {detected_name} official audio")
-                        debug_log["pipeline_used"] = "Tier 2: YouTube Audio Rip"
-                    except Exception:
+                        debug_log["pipeline_used"] = "Tier 2: YouTube Rip"
+                    except:
                         tmp_path = extract_audio(f"scsearch1:{detected_artist} {detected_name}")
-                        debug_log["pipeline_used"] = "Tier 2: SoundCloud Audio Rip"
+                        debug_log["pipeline_used"] = "Tier 2: SoundCloud Rip"
             except Exception as e: debug_log["error_message"] = str(e)
 
-    if tmp_path and os.path.exists(tmp_path):
-        uploaded_audio = client.files.upload(file=tmp_path)
-        contents.append(uploaded_audio)
-        debug_log["audio_attached"] = True
-        instruction = "Analyze this exact audio file using the FSTRX protocol based purely on its acoustic mechanics."
-        instruction += "\n\nCRITICAL: Include the ### FSTRX_DATA_EXTRACT ### list at the end."
-        contents.append(instruction)
-        debug_log["prompt_sent"] = instruction
-        return contents, tmp_path, debug_log
-    else:
-        fallback = f"Audio failed. Google Search '{detected_name}' by '{detected_artist}' for FSTRX audit."
-        contents.append(fallback)
-        debug_log["pipeline_used"] = "Tier 3: Text Fallback"
-        return contents, None, debug_log
+    # UPLOAD TO GOOGLE WITH SAFETY CHECK
+    if tmp_path and os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0:
+        try:
+            uploaded_audio = client.files.upload(file=tmp_path)
+            contents.append(uploaded_audio)
+            debug_log["audio_attached"] = True
+            prompt = "Analyze this exact audio file using the FSTRX protocol based purely on its acoustic mechanics."
+            prompt += "\n\nCRITICAL: Include the ### FSTRX_DATA_EXTRACT ### list at the end."
+            contents.append(prompt)
+            return contents, tmp_path, debug_log
+        except Exception as e:
+            debug_log["error_message"] = f"Google Upload Failed: {str(e)}"
 
-def get_fstrx_audit(formatted_contents):
-    response = client.models.generate_content(
-        model='gemini-2.5-pro',
-        contents=formatted_contents,
-        config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, tools=[{"google_search": {}}])
-    )
-    return response.text
-
-def parse_and_search_spotify(llm_text):
-    spotify_tracks = []
-    if "### FSTRX_DATA_EXTRACT ###" in llm_text:
-        extraction_block = llm_text.split("### FSTRX_DATA_EXTRACT ###")[1].strip()
-        for line in extraction_block.split('\n'):
-            if "|" in line:
-                raw_track, raw_artist = line.split("|")
-                query = f"track:{raw_track.strip()} artist:{raw_artist.strip()}"
-                try:
-                    result = sp.search(q=query, type='track', limit=1)
-                    if result['tracks']['items']:
-                        t = result['tracks']['items'][0]
-                        spotify_tracks.append({"name": t['name'], "artist": t['artists'][0]['name'], "url": t['external_urls']['spotify']})
-                except Exception: pass
-    return spotify_tracks
-
-# --- 4. FRONTEND UI ---
-st.set_page_config(page_title="FSTRX Engine", layout="wide")
-st.title("FSTRX Production Supervisor Engine")
-if 'audit_text' not in st.session_state: st.session_state.audit_text = None
-
-user_input = st.text_input("Enter Link or Description:")
-audio_file = st.file_uploader("Or Upload Audio", type=["mp3", "wav", "m4a"])
-
-if st.button("Run Production Audit"):
-    formatted_contents, temp_path, debug_log = process_input(user_input, audio_file)
-    st.session_state.audit_text = get_fstrx_audit(formatted_contents)
-    st.session_state.spotify_results = parse_and_search_spotify(st.session_state.audit_text)
-
-if st.session_state.audit_text:
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.markdown(st.session_state.audit_text.split("###")[0])
-    with col2:
-        for track in (st.session_state.get('spotify_results') or []):
-            st.write(f"**{track['name']}** - {track['artist']}")
-            track_id = track['url'].split("/")[-1]
-            st.markdown(f'<iframe src="https://open.spotify.com/embed/track/{track_id}" width="100%" height="80" frameBorder="0" allow="encrypted-media"></iframe>', unsafe_allow_html=True)
+    # TIER 3: Text Fallback
+    debug_log["pipeline_used"] = "Tier 3: Text Fallback (Audio Failed)"
+    fallback = f"Audio
