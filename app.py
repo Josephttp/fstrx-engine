@@ -10,7 +10,7 @@ import yt_dlp
 import requests
 import time
 
-# --- 1. CONFIGURATION ---
+# --- 1. SECURE CONFIGURATION ---
 try:
     SPOTIFY_CLIENT_ID = st.secrets["SPOTIFY_CLIENT_ID"]
     SPOTIFY_CLIENT_SECRET = st.secrets["SPOTIFY_CLIENT_SECRET"]
@@ -22,7 +22,7 @@ except KeyError:
 sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(client_id=SPOTIFY_CLIENT_ID, client_secret=SPOTIFY_CLIENT_SECRET))
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# --- 2. THE MASTER FSTRX PROMPT (Restored Asian/Synthwave Analysis) ---
+# --- 2. THE MASTER FSTRX PROMPT (Restored Asian/Synthwave Logic) ---
 SYSTEM_PROMPT = """
 # FSTRX MASTER ANALYSIS PROTOCOL
 
@@ -34,6 +34,10 @@ Before applying any filters, you MUST perform this internal audit of the audio:
 
 ### PHASE 2: THE 4-FILTER MECHANICS MATRIX
 [INSERT YOUR ORIGINAL 4-FILTER LOGIC HERE]
+
+### PHASE 3: FINAL SELECTION & OUTPUT
+1. Use Phase 1 insights for sub-genre precision (e.g., "Asian-Cyberpunk Synthwave" instead of "Trance").
+2. Select 10 tracks matching the mechanics identified in Phase 1 and 2.
 
 ***SYSTEM PARSING BLOCK***
 After the "TOP 10 SELECTIONS" section, add a section called "### FSTRX_DATA_EXTRACT ###".
@@ -91,19 +95,20 @@ def process_input(text_input, audio_file):
             while uploaded.state.name == "PROCESSING":
                 time.sleep(2); uploaded = client.files.get(name=uploaded.name)
             contents.append(uploaded)
-            contents.append("Perform FSTRX audit on this audio. List matches in the ### FSTRX_DATA_EXTRACT ### block.")
+            contents.append("Analyze this exact audio file using the FSTRX protocol. List matches in the ### FSTRX_DATA_EXTRACT ### block.")
             debug["audio"] = True
             return contents, tmp_path, debug
         except Exception: pass
 
     debug["pipeline"] = "Tier 3: Text Fallback"; debug["use_search"] = True
-    contents.append(f"Perform FSTRX audit for '{detected_name}' by '{detected_artist}' using metadata. List matches in the ### FSTRX_DATA_EXTRACT ### block.")
+    contents.append(f"Search metadata for '{detected_name}' by '{detected_artist}' and run FSTRX audit. Include ### FSTRX_DATA_EXTRACT ###.")
     return contents, None, debug
 
 # --- 4. FRONTEND UI ---
 st.set_page_config(page_title="FSTRX Engine", layout="wide")
 st.title("FSTRX Production Supervisor Engine")
 
+# SESSION STATE (Ensures similarity buttons don't clear the UI)
 if 'audit_text' not in st.session_state: st.session_state.audit_text = None
 if 'spotify_results' not in st.session_state: st.session_state.spotify_results = None
 if 'similar_tracks' not in st.session_state: st.session_state.similar_tracks = {}
@@ -131,7 +136,7 @@ if st.button("Run Production Audit"):
                         if s['tracks']['items']:
                             results.append({"name": t.strip(), "artist": a.strip(), "id": s['tracks']['items'][0]['id']})
             st.session_state.spotify_results = results
-        except Exception as e: st.error(f"Analysis Error: {e}")
+        except Exception as e: st.error(f"Analysis failed: {e}")
         if t_path and os.path.exists(t_path): os.remove(t_path)
 
 if st.session_state.audit_text:
@@ -143,12 +148,13 @@ if st.session_state.audit_text:
         st.subheader("FSTRX Crate")
         for track in (st.session_state.spotify_results or []):
             st.write(f"**{track['name']}** - {track['artist']}")
-            # Black Player (theme=0)
+            # Theme=0 for Black Players
             st.markdown(f'<iframe src="https://open.spotify.com/embed/track/{track["id"]}?theme=0" width="100%" height="80" frameBorder="0" allow="encrypted-media"></iframe>', unsafe_allow_html=True)
             
+            # Similarity Logic
             if st.button(f"🔍 Find Similar to {track['name']}", key=f"sim_{track['id']}"):
                 with st.spinner(f"Matching Sonic DNA..."):
-                    sim_inp = f"spotify:track:{track['id']}"
+                    sim_inp = f"https://open.spotify.com/track/{track['id']}"
                     sim_cont, sim_path, sim_dbg = process_input(sim_inp, None)
                     sim_config = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT)
                     if sim_dbg["use_search"]: sim_config.tools = [{"google_search": {}}]
@@ -162,6 +168,4 @@ if st.session_state.audit_text:
                     st.session_state.similar_tracks[track['id']] = sim_matches
             
             if track['id'] in st.session_state.similar_tracks:
-                for m in st.session_state.similar_tracks[track['id']]:
-                    st.markdown(f'↳ <iframe src="https://open.spotify.com/embed/track/{m["id"]}?theme=0" width="90%" height="80" frameBorder="0" allow="encrypted-media"></iframe>', unsafe_allow_html=True)
-            st.divider()
+                for m in st.session_state.similar_tracks[track
