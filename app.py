@@ -22,7 +22,7 @@ except KeyError:
 sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(client_id=SPOTIFY_CLIENT_ID, client_secret=SPOTIFY_CLIENT_SECRET))
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# --- 2. THE ULTIMATE FSTRX PROMPT (Asian Elements + 4-Filter Matrix) ---
+# --- 2. THE MASTER FSTRX PROMPT ---
 SYSTEM_PROMPT = """
 # FSTRX MASTER ANALYSIS PROTOCOL
 
@@ -93,22 +93,24 @@ def process_input(text_input, audio_file):
         try:
             uploaded = client.files.upload(file=tmp_path)
             while uploaded.state.name == "PROCESSING":
-                time.sleep(2); uploaded = client.files.get(name=uploaded.name)
+                time.sleep(2)
+                uploaded = client.files.get(name=uploaded.name)
+            
+            # The Critical Order Fix: Instructions must follow the file
             contents.append(uploaded)
+            contents.append("Analyze this exact audio file using the FSTRX protocol. List matches in the ### FSTRX_DATA_EXTRACT ### block.")
             debug["audio"] = True
-            contents.append("Perform FSTRX audit on this audio. Include ### FSTRX_DATA_EXTRACT ###.")
             return contents, tmp_path, debug
         except Exception: pass
 
     debug["pipeline"] = "Tier 3: Text Fallback"; debug["use_search"] = True
-    contents.append(f"Search metadata for '{detected_name}' by '{detected_artist}' and run FSTRX audit. Include ### FSTRX_DATA_EXTRACT ###.")
+    contents.append(f"Perform FSTRX audit for '{detected_name}' by '{detected_artist}' based on available metadata. List matches in the ### FSTRX_DATA_EXTRACT ### block.")
     return contents, None, debug
 
 # --- 4. FRONTEND UI ---
 st.set_page_config(page_title="FSTRX Engine", layout="wide")
 st.title("FSTRX Production Supervisor Engine")
 
-# SESSION STATE (Crucial for Cloud UI stability)
 if 'audit_text' not in st.session_state: st.session_state.audit_text = None
 if 'spotify_results' not in st.session_state: st.session_state.spotify_results = None
 if 'similar_tracks' not in st.session_state: st.session_state.similar_tracks = {}
@@ -121,20 +123,28 @@ if st.button("Run Production Audit"):
         st.session_state.similar_tracks = {} 
         cont, t_path, dbg = process_input(inp, file)
         st.session_state.debug = dbg
-        config = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT)
-        if dbg["use_search"]: config.tools = [{"google_search": {}}]
-        res = client.models.generate_content(model='gemini-2.0-flash', contents=cont, config=config)
-        st.session_state.audit_text = res.text
         
-        results = []
-        if "### FSTRX_DATA_EXTRACT ###" in res.text:
-            extract = res.text.split("### FSTRX_DATA_EXTRACT ###")[-1].strip()
-            for line in extract.split('\n'):
-                if "|" in line:
-                    t, a = line.split("|"); s = sp.search(q=f"track:{t.strip()} artist:{a.strip()}", type='track', limit=1)
-                    if s['tracks']['items']:
-                        results.append({"name": t.strip(), "artist": a.strip(), "id": s['tracks']['items'][0]['id']})
-        st.session_state.spotify_results = results
+        config = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT)
+        if dbg["use_search"]:
+            config.tools = [{"google_search": {}}]
+
+        try:
+            res = client.models.generate_content(model='gemini-2.0-flash', contents=cont, config=config)
+            st.session_state.audit_text = res.text
+            
+            results = []
+            if "### FSTRX_DATA_EXTRACT ###" in res.text:
+                extract = res.text.split("### FSTRX_DATA_EXTRACT ###")[-1].strip()
+                for line in extract.split('\n'):
+                    if "|" in line:
+                        t, a = line.split("|")
+                        s = sp.search(q=f"track:{t.strip()} artist:{a.strip()}", type='track', limit=1)
+                        if s['tracks']['items']:
+                            results.append({"name": t.strip(), "artist": a.strip(), "id": s['tracks']['items'][0]['id']})
+            st.session_state.spotify_results = results
+        except Exception as e:
+            st.error(f"Analysis failed: {e}")
+            
         if t_path and os.path.exists(t_path): os.remove(t_path)
 
 if st.session_state.audit_text:
@@ -146,10 +156,8 @@ if st.session_state.audit_text:
         st.subheader("FSTRX Crate")
         for track in (st.session_state.spotify_results or []):
             st.write(f"**{track['name']}** - {track['artist']}")
-            # Theme=0 for Black Players
             st.markdown(f'<iframe src="https://open.spotify.com/embed/track/{track["id"]}?theme=0" width="100%" height="80" frameBorder="0" allow="encrypted-media"></iframe>', unsafe_allow_html=True)
             
-            # Similarity Logic
             if st.button(f"🔍 Find Similar to {track['name']}", key=f"sim_{track['id']}"):
                 with st.spinner(f"Matching Sonic DNA..."):
                     sim_inp = f"spotify:track:{track['id']}"
@@ -161,8 +169,10 @@ if st.session_state.audit_text:
                     if "### FSTRX_DATA_EXTRACT ###" in sim_res.text:
                         for s_line in sim_res.text.split("### FSTRX_DATA_EXTRACT ###")[-1].strip().split('\n')[:5]:
                             if "|" in s_line:
-                                st_t, st_a = s_line.split("|"); st_s = sp.search(q=f"track:{st_t.strip()} artist:{st_a.strip()}", type='track', limit=1)
-                                if st_s['tracks']['items']: sim_matches.append({"name": st_t.strip(), "id": st_s['tracks']['items'][0]['id']})
+                                st_t, st_a = s_line.split("|")
+                                st_s = sp.search(q=f"track:{st_t.strip()} artist:{st_a.strip()}", type='track', limit=1)
+                                if st_s['tracks']['items']:
+                                    sim_matches.append({"name": st_t.strip(), "id": st_s['tracks']['items'][0]['id']})
                     st.session_state.similar_tracks[track['id']] = sim_matches
             
             if track['id'] in st.session_state.similar_tracks:
