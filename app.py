@@ -10,19 +10,19 @@ import yt_dlp
 import requests
 import time
 
-# --- 1. CONFIGURATION (SECURE VAULT) ---
+# --- 1. SECURE CONFIGURATION ---
 try:
     SPOTIFY_CLIENT_ID = st.secrets["SPOTIFY_CLIENT_ID"]
     SPOTIFY_CLIENT_SECRET = st.secrets["SPOTIFY_CLIENT_SECRET"]
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 except KeyError:
-    st.error("KEYS MISSING: Go to Streamlit Settings > Secrets and add your keys.")
+    st.error("Missing Secrets! Add SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, and GEMINI_API_KEY to Streamlit Secrets.")
     st.stop()
 
 sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(client_id=SPOTIFY_CLIENT_ID, client_secret=SPOTIFY_CLIENT_SECRET))
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# --- 2. THE MASTER FSTRX PROMPT ---
+# --- 2. THE ULTIMATE FSTRX PROMPT (Asian Elements + 4-Filter Matrix) ---
 SYSTEM_PROMPT = """
 # FSTRX MASTER ANALYSIS PROTOCOL
 
@@ -36,8 +36,8 @@ Before applying any filters, you MUST perform this internal audit of the audio:
 [INSERT YOUR ORIGINAL 4-FILTER LOGIC HERE]
 
 ### PHASE 3: FINAL SELECTION & OUTPUT
-1. Use the insights from Phase 1 to ensure sub-genre precision (e.g., "Asian-Cyberpunk Electro" instead of "Trance").
-2. Select 10 tracks that match the mechanics identified in Phase 1 and 2.
+1. Use Phase 1 insights for sub-genre precision (e.g., "Asian-Cyberpunk Synthwave" instead of "Trance").
+2. Select 10 tracks matching the mechanics identified in Phase 1 and 2.
 
 ***SYSTEM PARSING BLOCK***
 After the "TOP 10 SELECTIONS" section, add a section called "### FSTRX_DATA_EXTRACT ###".
@@ -49,11 +49,8 @@ def extract_audio(query):
     temp_dir = tempfile.gettempdir()
     out_tmpl = os.path.join(temp_dir, 'fstrx_audio_%(id)s.%(ext)s')
     ydl_opts = {
-        'format': 'm4a/bestaudio/best',
-        'outtmpl': out_tmpl,
-        'quiet': True,
-        'noplaylist': True,
-        'nocheckcertificate': True,
+        'format': 'm4a/bestaudio/best', 'outtmpl': out_tmpl, 'quiet': True, 
+        'noplaylist': True, 'nocheckcertificate': True,
         'extractor_args': {'youtube': ['player_client=default,-android_sdkless']}
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -96,24 +93,22 @@ def process_input(text_input, audio_file):
         try:
             uploaded = client.files.upload(file=tmp_path)
             while uploaded.state.name == "PROCESSING":
-                time.sleep(2)
-                uploaded = client.files.get(name=uploaded.name)
+                time.sleep(2); uploaded = client.files.get(name=uploaded.name)
             contents.append(uploaded)
             debug["audio"] = True
-            contents.append("Perform FSTRX audit based on this audio. Include ### FSTRX_DATA_EXTRACT ###.")
+            contents.append("Perform FSTRX audit on this audio. Include ### FSTRX_DATA_EXTRACT ###.")
             return contents, tmp_path, debug
         except Exception: pass
 
-    debug["pipeline"] = "Tier 3: Text Fallback"
-    debug["use_search"] = True
-    contents.append(f"Search for '{detected_name}' by '{detected_artist}' and run FSTRX audit. Include ### FSTRX_DATA_EXTRACT ###.")
+    debug["pipeline"] = "Tier 3: Text Fallback"; debug["use_search"] = True
+    contents.append(f"Search metadata for '{detected_name}' by '{detected_artist}' and run FSTRX audit. Include ### FSTRX_DATA_EXTRACT ###.")
     return contents, None, debug
 
 # --- 4. FRONTEND UI ---
 st.set_page_config(page_title="FSTRX Engine", layout="wide")
 st.title("FSTRX Production Supervisor Engine")
 
-# Maintain state for similar track searches
+# SESSION STATE (Crucial for Cloud UI stability)
 if 'audit_text' not in st.session_state: st.session_state.audit_text = None
 if 'spotify_results' not in st.session_state: st.session_state.spotify_results = None
 if 'similar_tracks' not in st.session_state: st.session_state.similar_tracks = {}
@@ -122,25 +117,21 @@ inp = st.text_input("Enter Link or Description:")
 file = st.file_uploader("Or Upload MP3", type=["mp3", "wav", "m4a"])
 
 if st.button("Run Production Audit"):
-    with st.spinner("Detective is listening..."):
+    with st.spinner("Analyzing Sonic DNA..."):
         st.session_state.similar_tracks = {} 
         cont, t_path, dbg = process_input(inp, file)
         st.session_state.debug = dbg
-        
         config = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT)
         if dbg["use_search"]: config.tools = [{"google_search": {}}]
-
         res = client.models.generate_content(model='gemini-2.0-flash', contents=cont, config=config)
         st.session_state.audit_text = res.text
         
-        # Parse Spotify Links
         results = []
         if "### FSTRX_DATA_EXTRACT ###" in res.text:
             extract = res.text.split("### FSTRX_DATA_EXTRACT ###")[-1].strip()
             for line in extract.split('\n'):
                 if "|" in line:
-                    t, a = line.split("|")
-                    s = sp.search(q=f"track:{t.strip()} artist:{a.strip()}", type='track', limit=1)
+                    t, a = line.split("|"); s = sp.search(q=f"track:{t.strip()} artist:{a.strip()}", type='track', limit=1)
                     if s['tracks']['items']:
                         results.append({"name": t.strip(), "artist": a.strip(), "id": s['tracks']['items'][0]['id']})
         st.session_state.spotify_results = results
@@ -155,31 +146,26 @@ if st.session_state.audit_text:
         st.subheader("FSTRX Crate")
         for track in (st.session_state.spotify_results or []):
             st.write(f"**{track['name']}** - {track['artist']}")
-            # Black Theme Player (theme=0)
+            # Theme=0 for Black Players
             st.markdown(f'<iframe src="https://open.spotify.com/embed/track/{track["id"]}?theme=0" width="100%" height="80" frameBorder="0" allow="encrypted-media"></iframe>', unsafe_allow_html=True)
             
-            # Similarity Button
+            # Similarity Logic
             if st.button(f"🔍 Find Similar to {track['name']}", key=f"sim_{track['id']}"):
-                with st.spinner(f"Finding matches for {track['name']}..."):
+                with st.spinner(f"Matching Sonic DNA..."):
                     sim_inp = f"spotify:track:{track['id']}"
                     sim_cont, sim_path, sim_dbg = process_input(sim_inp, None)
                     sim_config = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT)
                     if sim_dbg["use_search"]: sim_config.tools = [{"google_search": {}}]
                     sim_res = client.models.generate_content(model='gemini-2.0-flash', contents=sim_cont, config=sim_config)
-                    
                     sim_matches = []
                     if "### FSTRX_DATA_EXTRACT ###" in sim_res.text:
-                        sim_extract = sim_res.text.split("### FSTRX_DATA_EXTRACT ###")[-1].strip()
-                        for s_line in sim_extract.split('\n')[:5]: # Limit to 5
+                        for s_line in sim_res.text.split("### FSTRX_DATA_EXTRACT ###")[-1].strip().split('\n')[:5]:
                             if "|" in s_line:
-                                st_t, st_a = s_line.split("|")
-                                st_s = sp.search(q=f"track:{st_t.strip()} artist:{st_a.strip()}", type='track', limit=1)
-                                if st_s['tracks']['items']:
-                                    sim_matches.append({"name": st_t.strip(), "id": st_s['tracks']['items'][0]['id']})
+                                st_t, st_a = s_line.split("|"); st_s = sp.search(q=f"track:{st_t.strip()} artist:{st_a.strip()}", type='track', limit=1)
+                                if st_s['tracks']['items']: sim_matches.append({"name": st_t.strip(), "id": st_s['tracks']['items'][0]['id']})
                     st.session_state.similar_tracks[track['id']] = sim_matches
             
-            # Display Similar Matches
             if track['id'] in st.session_state.similar_tracks:
-                for match in st.session_state.similar_tracks[track['id']]:
-                    st.markdown(f'↳ <iframe src="https://open.spotify.com/embed/track/{match["id"]}?theme=0" width="90%" height="80" frameBorder="0" allow="encrypted-media"></iframe>', unsafe_allow_html=True)
+                for m in st.session_state.similar_tracks[track['id']]:
+                    st.markdown(f'↳ <iframe src="https://open.spotify.com/embed/track/{m["id"]}?theme=0" width="90%" height="80" frameBorder="0" allow="encrypted-media"></iframe>', unsafe_allow_html=True)
             st.divider()
