@@ -165,4 +165,21 @@ if st.session_state.audit_text:
                     sim_cont, sim_path, sim_dbg = process_input(sim_inp, None)
                     sim_config = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT)
                     if sim_dbg["use_search"]: sim_config.tools = [{"google_search": {}}]
-                    sim_res = client.models.generate_content(model='gemini-2.0
+                    sim_res = client.models.generate_content(model='gemini-2.0-flash', contents=sim_cont, config=sim_config)
+                    
+                    sim_matches = []
+                    if "### FSTRX_DATA_EXTRACT ###" in sim_res.text:
+                        sim_extract = sim_res.text.split("### FSTRX_DATA_EXTRACT ###")[-1].strip()
+                        for s_line in sim_extract.split('\n')[:5]: # Limit to 5
+                            if "|" in s_line:
+                                st_t, st_a = s_line.split("|")
+                                st_s = sp.search(q=f"track:{st_t.strip()} artist:{st_a.strip()}", type='track', limit=1)
+                                if st_s['tracks']['items']:
+                                    sim_matches.append({"name": st_t.strip(), "id": st_s['tracks']['items'][0]['id']})
+                    st.session_state.similar_tracks[track['id']] = sim_matches
+            
+            # Display Similar Matches
+            if track['id'] in st.session_state.similar_tracks:
+                for match in st.session_state.similar_tracks[track['id']]:
+                    st.markdown(f'↳ <iframe src="https://open.spotify.com/embed/track/{match["id"]}?theme=0" width="90%" height="80" frameBorder="0" allow="encrypted-media"></iframe>', unsafe_allow_html=True)
+            st.divider()
