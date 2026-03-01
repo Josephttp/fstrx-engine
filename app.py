@@ -10,26 +10,29 @@ import yt_dlp
 import requests
 import time
 
-# --- 1. CONFIGURATION ---
+# --- 1. CONFIGURATION (SAFE VAULT) ---
+# This pulls from Streamlit Settings > Secrets. NEVER paste keys here.
 try:
     SPOTIFY_CLIENT_ID = st.secrets["SPOTIFY_CLIENT_ID"]
     SPOTIFY_CLIENT_SECRET = st.secrets["SPOTIFY_CLIENT_SECRET"]
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 except KeyError:
-    st.error("Missing Secrets! Add them to the Streamlit Dashboard.")
+    st.error("KEYS MISSING: Go to Streamlit Settings > Secrets and add your keys.")
     st.stop()
 
+# Initialize Clients
 sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(client_id=SPOTIFY_CLIENT_ID, client_secret=SPOTIFY_CLIENT_SECRET))
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 # --- 2. THE MASTER FSTRX PROMPT ---
 SYSTEM_PROMPT = """
 # FSTRX MASTER ANALYSIS PROTOCOL
+PHASE 1: DECONSTRUCTIVE LISTENING
 1. TIMBRAL AUDIT: Identify synthesis (Analog saws, FM bells, 808 subs). 
-2. CULTURAL MOTIFS: Check for regional instruments (Koto, Erhu, Taiko).
+2. CULTURAL MOTIFS: Check for regional instruments (Koto, Erhu, Taiko) or scales (Pentatonic). 
 3. HYBRID MAPPING: Identify era fusions (e.g., 80s Retro + Modern Cinematic).
 
-### PHASE 2: THE 4-FILTER MECHANICS MATRIX
+PHASE 2: THE 4-FILTER MECHANICS MATRIX
 [INSERT YOUR ORIGINAL 4-FILTER LOGIC HERE]
 
 ***SYSTEM PARSING BLOCK***
@@ -83,7 +86,7 @@ def process_input(text_input, audio_file):
                     except:
                         tmp_path = extract_audio(f"scsearch1:{detected_artist} {detected_name}")
                         debug["pipeline"] = "SoundCloud Rip"
-            except Exception as e: st.error(f"Spotify/Rip Error: {e}")
+            except Exception as e: st.error(f"Metadata Error: {e}")
 
     # UPLOAD & POLLING
     if tmp_path and os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0:
@@ -97,12 +100,12 @@ def process_input(text_input, audio_file):
             contents.append("Perform FSTRX audit based on this audio. Include ### FSTRX_DATA_EXTRACT ###.")
             return contents, tmp_path, debug
         except Exception as e:
-            st.warning(f"Audio upload failed, switching to search: {e}")
+            st.warning(f"Audio upload failed: {e}")
 
-    # FALLBACK (SEARCH ENABLED)
+    # FALLBACK
     debug["pipeline"] = "Tier 3: Text Fallback"
     debug["use_search"] = True
-    contents.append(f"Audio failed. Use Google Search to find metadata for '{detected_name}' by '{detected_artist}' and run FSTRX audit. Include ### FSTRX_DATA_EXTRACT ###.")
+    contents.append(f"Audio failed. Use Google Search for '{detected_name}' by '{detected_artist}' to run FSTRX audit. Include ### FSTRX_DATA_EXTRACT ###.")
     return contents, None, debug
 
 # --- 4. FRONTEND UI ---
@@ -114,10 +117,8 @@ inp = st.text_input("Enter Link or Description:")
 file = st.file_uploader("Or Upload MP3", type=["mp3", "wav", "m4a"])
 
 if st.button("Run Production Audit"):
-    with st.spinner("Analyzing..."):
+    with st.spinner("Detective is listening..."):
         cont, t_path, dbg = process_input(inp, file)
-        
-        # FIX: Only use tools=[{"google_search": {}}] if audio failed (dbg["use_search"] is True)
         config = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT)
         if dbg["use_search"]:
             config.tools = [{"google_search": {}}]
