@@ -69,14 +69,12 @@ def process_input(text_input, audio_file):
     detected_artist = ""
     debug_log = {"pipeline_used": "Unknown", "audio_attached": False, "error_message": "None", "prompt_sent": ""}
     
-    # TIER 0: Direct Upload
     if audio_file:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
             tmp.write(audio_file.getvalue())
             tmp_path = tmp.name
         debug_log["pipeline_used"] = "Tier 0: Direct MP3 Upload"
     
-    # TIER 1 & 2: Spotify Links
     elif "spotify.com" in text_input or "spotify:" in text_input:
         match = re.search(r"track/([a-zA-Z0-9]+)", text_input)
         if match:
@@ -99,19 +97,57 @@ def process_input(text_input, audio_file):
                         debug_log["pipeline_used"] = "Tier 2: SoundCloud Rip"
             except Exception as e: debug_log["error_message"] = str(e)
 
-    # UPLOAD TO GOOGLE WITH SAFETY CHECK
     if tmp_path and os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0:
         try:
             uploaded_audio = client.files.upload(file=tmp_path)
             contents.append(uploaded_audio)
             debug_log["audio_attached"] = True
-            prompt = "Analyze this exact audio file using the FSTRX protocol based purely on its acoustic mechanics."
-            prompt += "\n\nCRITICAL: Include the ### FSTRX_DATA_EXTRACT ### list at the end."
+            prompt = "Analyze this exact audio file using the FSTRX protocol based purely on its acoustic mechanics. Include the ### FSTRX_DATA_EXTRACT ### list at the end."
             contents.append(prompt)
+            debug_log["prompt_sent"] = prompt
             return contents, tmp_path, debug_log
         except Exception as e:
             debug_log["error_message"] = f"Google Upload Failed: {str(e)}"
 
-    # TIER 3: Text Fallback
+    # TIER 3: Fixed Fallback Logic (No line breaks in the f-string)
     debug_log["pipeline_used"] = "Tier 3: Text Fallback (Audio Failed)"
-    fallback = f"Audio
+    fallback_text = f"Audio failed. Search '{detected_name}' by '{detected_artist}' to run FSTRX audit. User notes: {text_input} Include ### FSTRX_DATA_EXTRACT ###."
+    contents.append(fallback_text)
+    return contents, None, debug_log
+
+# --- 4. FRONTEND UI ---
+st.set_page_config(page_title="FSTRX Engine", layout="wide")
+st.title("FSTRX Production Supervisor Engine")
+if 'audit' not in st.session_state: st.session_state.audit = None
+
+inp = st.text_input("Enter Link or Description:")
+file = st.file_uploader("Or Upload MP3", type=["mp3", "wav"])
+
+if st.button("Run Production Audit"):
+    with st.spinner("Detective is listening..."):
+        cont, t_path, dbg = process_input(inp, file)
+        st.session_state.debug = dbg
+        res = client.models.generate_content(
+            model='gemini-2.0-flash', 
+            contents=cont, 
+            config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, tools=[{"google_search": {}}])
+        )
+        st.session_state.audit = res.text
+        if t_path and os.path.exists(t_path): os.remove(t_path)
+
+if st.session_state.audit:
+    col1, col2 = st.columns([2, 1])
+    with col1: 
+        st.markdown(st.session_state.audit.split("###")[0])
+        with st.expander("🛠️ Diagnostics"):
+            st.write(st.session_state.debug)
+    with col2:
+        if "### FSTRX_DATA_EXTRACT ###" in st.session_state.audit:
+            extract = st.session_state.audit.split("### FSTRX_DATA_EXTRACT ###")[-1].strip()
+            for line in extract.split('\n'):
+                if "|" in line:
+                    t, a = line.split("|")
+                    s = sp.search(q=f"track:{t.strip()} artist:{a.strip()}", type='track', limit=1)
+                    if s['tracks']['items']:
+                        tid = s['tracks']['items'][0]['id']
+                        st.markdown(f'<iframe src="https://open.spotify.com/embed/track/{tid}" width="100%" height="80" frameBorder="0" allow="encrypted-media"></iframe>', unsafe_allow_html=True)
